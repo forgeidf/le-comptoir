@@ -13,13 +13,20 @@ function isAuthorized(req) {
   return token && token === process.env.ADMIN_SECRET;
 }
 
+// Détecte si c'est une requête de login (qui ne nécessite pas de token valide)
+function isLoginRequest(req) {
+  if (req.method !== 'POST') return false;
+  return req.body && req.body.action === 'login';
+}
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-admin-token');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  if (!isAuthorized(req)) {
+  // Le login est la seule route qui ne nécessite pas de token valide
+  if (!isLoginRequest(req) && !isAuthorized(req)) {
     return res.status(401).json({ error: 'Non autorisé' });
   }
 
