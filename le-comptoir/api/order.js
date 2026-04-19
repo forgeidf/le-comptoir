@@ -2,7 +2,7 @@
 // GET  ?token=xxx        → retourne les détails de la commande (suivi client)
 // POST { token, action: 'cancel' } → annule la commande si possible
 
-import { kv } from '@vercel/kv';
+import { kv } from './_kv.js';
 import { Resend } from 'resend';
 
 const resend = new Resend(process.env.RESEND_API_KEY);

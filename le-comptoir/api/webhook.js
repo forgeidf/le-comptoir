@@ -2,7 +2,7 @@
 // Reçoit les événements Stripe, sauvegarde la commande, envoie les emails
 
 import Stripe from 'stripe';
-import { kv } from '@vercel/kv';
+import { kv } from './_kv.js';
 import { Resend } from 'resend';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);

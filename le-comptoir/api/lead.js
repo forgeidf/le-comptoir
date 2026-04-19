@@ -1,7 +1,7 @@
 // api/lead.js
 // Reçoit les demandes de devis du formulaire contact
 
-import { kv } from '@vercel/kv';
+import { kv } from './_kv.js';
 import { Resend } from 'resend';
 
 const resend = new Resend(process.env.RESEND_API_KEY);
