@@ -6,16 +6,5 @@
   "routes": [
     { "src": "/api/(.*)", "dest": "/api/$1" },
     { "src": "/(.*)", "dest": "/index.html" }
-  ],
-  "env": {
-    "STRIPE_SECRET_KEY": "@stripe_secret_key",
-    "STRIPE_WEBHOOK_SECRET": "@stripe_webhook_secret",
-    "RESEND_API_KEY": "@resend_api_key",
-    "ADMIN_PASSWORD": "@admin_password",
-    "ADMIN_SECRET": "@admin_secret",
-    "KV_REST_API_URL": "@kv_rest_api_url",
-    "KV_REST_API_TOKEN": "@kv_rest_api_token",
-    "SHOP_EMAIL": "@shop_email",
-    "SITE_URL": "@site_url"
-  }
+  ]
 }
