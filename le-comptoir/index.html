@@ -1299,7 +1299,7 @@ function renderShop(){
         <h4>${esc(p.nom)}</h4>
         <p class="prod-desc">${esc(p.desc)}</p>
         <div class="prod-foot">
-          <div class="prod-price">${p.prix} <small>€</small></div>
+          <div class="prod-price">${p.prixAvant ? `<span style="color:var(--txt3);font-size:14px;font-weight:400;text-decoration:line-through;margin-right:6px;">${p.prixAvant}€</span>` : ''}${p.prix} <small>€</small></div>
           <button class="prod-add" onclick="addToCart(${i},this)">Ajouter</button>
         </div>
       </div>`;

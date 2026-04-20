@@ -2,20 +2,20 @@
 // Reçoit les événements Stripe, sauvegarde la commande, envoie les emails
 
 import Stripe from 'stripe';
+import { randomUUID } from 'crypto';
 import { kv } from './_kv.js';
-import { Resend } from 'resend';
+import { sendMail } from './_mail.js';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
-const resend = new Resend(process.env.RESEND_API_KEY);
 
 // Vercel lit le raw body via config
 export const config = { api: { bodyParser: false } };
 
 async function getRawBody(req) {
   return new Promise((resolve, reject) => {
-    let data = '';
-    req.on('data', chunk => (data += chunk));
-    req.on('end', () => resolve(Buffer.from(data)));
+    const chunks = [];
+    req.on('data', chunk => chunks.push(chunk));
+    req.on('end', () => resolve(Buffer.concat(chunks)));
     req.on('error', reject);
   });
 }
@@ -27,7 +27,7 @@ function generateOrderId() {
 }
 
 function generateTrackingToken() {
-  return crypto.randomUUID().replace(/-/g, '').substring(0, 24);
+  return randomUUID().replace(/-/g, '').substring(0, 24);
 }
 
 export default async function handler(req, res) {
@@ -48,9 +48,9 @@ export default async function handler(req, res) {
     const session = event.data.object;
 
     try {
-      const meta = session.metadata;
+      const meta = session.metadata || {};
       const items = JSON.parse(meta.items || '[]');
-      const shipping = session.shipping_details?.address || {};
+      const shipping = session.shipping_details?.address || session.customer_details?.address || {};
       const orderId = generateOrderId();
       const trackingToken = generateTrackingToken();
 
@@ -59,13 +59,12 @@ export default async function handler(req, res) {
         token: trackingToken,
         stripeSessionId: session.id,
         status: 'confirmée',
-        // Statuts possibles : confirmée | en_preparation | expediee | livree | annulee
         date: new Date().toISOString(),
         client: {
           prenom: meta.prenom || '',
           nom: meta.nom || '',
-          email: session.customer_email,
-          phone: meta.phone || '',
+          email: session.customer_email || session.customer_details?.email || '',
+          phone: meta.phone || session.customer_details?.phone || '',
         },
         adresse: {
           ligne1: shipping.line1 || '',
@@ -84,37 +83,45 @@ export default async function handler(req, res) {
         ]
       };
 
-      // Sauvegarde dans Vercel KV
-      // index par id + par token pour le suivi client
+      // Sauvegarde dans Redis
       await kv.set(`order:${orderId}`, order, { ex: 60 * 60 * 24 * 365 }); // 1 an
       await kv.set(`order_token:${trackingToken}`, orderId, { ex: 60 * 60 * 24 * 365 });
-      // Liste globale pour l'admin
       await kv.lpush('orders:list', orderId);
 
       const siteUrl = process.env.SITE_URL || 'https://lecomptoir.vercel.app';
       const trackingUrl = `${siteUrl}/?suivi=${trackingToken}`;
+      const clientEmail = order.client.email;
 
-      // ─── Email client ───
-      await resend.emails.send({
-        from: 'Le Comptoir <commandes@lecomptoir-atelier.fr>',
-        to: [session.customer_email],
-        subject: `✅ Commande confirmée — ${orderId}`,
-        html: emailClientHTML({ order, trackingUrl }),
-      });
+      // Email client
+      if (clientEmail) {
+        try {
+          await sendMail({
+            to: clientEmail,
+            subject: `Commande confirmée — ${orderId}`,
+            html: emailClientHTML({ order, trackingUrl }),
+          });
+        } catch (mailErr) {
+          console.error('Email client failed:', mailErr.message);
+        }
+      }
 
-      // ─── Email admin ───
-      const shopEmail = process.env.SHOP_EMAIL || 'salut@lecomptoir-atelier.fr';
-      await resend.emails.send({
-        from: 'Le Comptoir <commandes@lecomptoir-atelier.fr>',
-        to: [shopEmail],
-        subject: `🛒 Nouvelle commande ${orderId} — ${order.total.toFixed(2)}€`,
-        html: emailAdminHTML({ order }),
-      });
+      // Email admin
+      const shopEmail = process.env.SHOP_EMAIL || process.env.GMAIL_USER;
+      if (shopEmail) {
+        try {
+          await sendMail({
+            to: shopEmail,
+            subject: `Nouvelle commande ${orderId} — ${order.total.toFixed(2)}€`,
+            html: emailAdminHTML({ order }),
+          });
+        } catch (mailErr) {
+          console.error('Email admin failed:', mailErr.message);
+        }
+      }
 
-      console.log(`Order ${orderId} created for ${session.customer_email}`);
+      console.log(`Order ${orderId} created for ${clientEmail}`);
     } catch (err) {
       console.error('Order processing error:', err);
-      // Ne pas renvoyer d'erreur à Stripe pour éviter les retries
     }
   }
 
@@ -133,13 +140,13 @@ function emailClientHTML({ order, trackingUrl }) {
   ).join('');
 
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"></head>
-<body style="margin:0;padding:0;background:#11110f;font-family:Inter,sans-serif;">
+<body style="margin:0;padding:0;background:#11110f;font-family:Arial,sans-serif;">
 <div style="max-width:580px;margin:0 auto;padding:40px 20px;">
   <div style="margin-bottom:32px;">
     <span style="font-size:22px;font-weight:800;color:#f5f4f0;letter-spacing:-0.8px;">Le <span style="color:#ff6435;">Comptoir</span></span>
   </div>
   <div style="background:#18181a;border:1px solid rgba(168,167,160,0.08);border-radius:14px;padding:36px;">
-    <div style="font-size:28px;margin-bottom:8px;">✅</div>
+    <div style="font-size:28px;margin-bottom:8px;">✓</div>
     <h1 style="font-size:22px;font-weight:800;color:#f5f4f0;margin:0 0 8px;letter-spacing:-0.5px;">Commande confirmée !</h1>
     <p style="color:#a8a7a0;font-size:14px;margin:0 0 28px;line-height:1.6;">Bonjour ${order.client.prenom || 'cher client'}, votre paiement a bien été reçu. Nous préparons votre commande.</p>
     
@@ -153,7 +160,7 @@ function emailClientHTML({ order, trackingUrl }) {
     </table>
     
     <div style="border-top:1px solid rgba(168,167,160,0.08);padding-top:16px;">
-      ${order.livraison > 0 ? `<div style="display:flex;justify-content:space-between;margin-bottom:8px;"><span style="color:#a8a7a0;font-size:13px;">Livraison</span><span style="color:#a8a7a0;font-size:13px;">${order.livraison.toFixed(2)} €</span></div>` : `<div style="margin-bottom:8px;color:#4ed28a;font-size:13px;">🎁 Livraison offerte</div>`}
+      ${order.livraison > 0 ? `<div style="margin-bottom:8px;color:#a8a7a0;font-size:13px;">Livraison : ${order.livraison.toFixed(2)} €</div>` : `<div style="margin-bottom:8px;color:#4ed28a;font-size:13px;">🎁 Livraison offerte</div>`}
       <div style="display:flex;justify-content:space-between;"><span style="color:#f5f4f0;font-size:16px;font-weight:700;">Total payé</span><span style="color:#ff6435;font-size:20px;font-weight:800;">${order.total.toFixed(2)} €</span></div>
     </div>
   </div>
@@ -161,7 +168,7 @@ function emailClientHTML({ order, trackingUrl }) {
   <div style="margin-top:20px;background:#18181a;border:1px solid rgba(255,100,53,0.22);border-radius:14px;padding:28px;text-align:center;">
     <div style="font-size:15px;font-weight:700;color:#f5f4f0;margin-bottom:8px;">Suivre ma commande</div>
     <p style="color:#a8a7a0;font-size:13px;margin:0 0 20px;line-height:1.6;">Retrouvez le statut de votre commande en temps réel avec ce lien unique — aucun compte nécessaire.</p>
-    <a href="${trackingUrl}" style="display:inline-block;padding:14px 28px;background:#ff6435;color:#11110f;font-weight:700;font-size:14px;text-decoration:none;border-radius:8px;">Suivre ma commande →</a>
+    <a href="${trackingUrl}" style="display:inline-block;padding:14px 28px;background:#ff6435;color:#11110f;font-weight:700;font-size:14px;text-decoration:none;border-radius:8px;">Suivre ma commande</a>
     <p style="color:#6f6e68;font-size:11px;margin:16px 0 0;">Vous pouvez aussi annuler depuis cette page tant que la commande n'est pas expédiée.</p>
   </div>
 
@@ -181,9 +188,9 @@ function emailAdminHTML({ order }) {
   ).join('');
 
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"></head>
-<body style="margin:0;padding:0;background:#11110f;font-family:Inter,sans-serif;">
+<body style="margin:0;padding:0;background:#11110f;font-family:Arial,sans-serif;">
 <div style="max-width:560px;margin:0 auto;padding:32px 20px;">
-  <h2 style="color:#ff6435;font-size:18px;margin:0 0 20px;">🛒 Nouvelle commande — ${order.id}</h2>
+  <h2 style="color:#ff6435;font-size:18px;margin:0 0 20px;">Nouvelle commande — ${order.id}</h2>
   <div style="background:#18181a;border:1px solid rgba(168,167,160,0.08);border-radius:12px;padding:28px;margin-bottom:16px;">
     <div style="color:#a8a7a0;font-size:12px;margin-bottom:16px;letter-spacing:1px;">CLIENT</div>
     <div style="color:#f5f4f0;font-size:15px;font-weight:600;">${order.client.prenom} ${order.client.nom}</div>
