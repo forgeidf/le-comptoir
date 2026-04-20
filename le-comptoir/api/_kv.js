@@ -12,7 +12,11 @@ async function getClient() {
   if (connecting) return connecting;
 
   connecting = (async () => {
-    const url = process.env.KV_REST_API_REDIS_URL || process.env.REDIS_URL || process.env.KV_URL;
+    const url = process.env.KV_REST_API_REDIS_URL
+             || process.env.KV_REST_API_REDIS_REDIS_URL
+             || process.env.STORAGE_URL
+             || process.env.REDIS_URL
+             || process.env.KV_URL;
     if (!url) throw new Error('KV_REST_API_REDIS_URL non définie');
     const c = createClient({ url, socket: { tls: url.startsWith('rediss://') } });
     c.on('error', (err) => console.error('Redis error:', err));
